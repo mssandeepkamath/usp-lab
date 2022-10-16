@@ -1,113 +1,120 @@
-#include <stdlib.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <syslog.h>
-#include <string.h>
-#include <fcntl.h>
-#include <shadow.h>
-#include <crypt.h>
-#include <pwd.h>
-// Function to Make this a daemon process (Recall steps learnt in theory)
-static void skeleton_daemon()
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<sys/types.h>
+#include<sys/stat.h>
+#include<string.h>
+#include<signal.h>
+#include<pwd.h>
+#include<shadow.h>
+#include<crypt.h>
+#include<syslog.h>
+#include<fcntl.h>
+
+/*
+Remember:
+1.Run gcc daemon.c -lcrypt
+2.Header file <pwd> <crypt> <shadow> <syslog> 
+3.Functions and structures. getpwnam, getspnam and more
+4.Creating daemon process
+5.Closing file descriptors
+6.In client while accepting password give a space
+7.Learn delimiter part
+*/
+
+static void daemon_skeleton()
 {
-    //     Forking and thus making the process the session leader
     pid_t pid;
-    pid = fork();
+    pid=fork();
 
+    if(pid<0)
+    exit(EXIT_FAILURE);
+    if(pid>0)
+    exit(EXIT_SUCCESS);
+
+    if(setsid() < 0)
+    exit(EXIT_FAILURE);
+
+    signal(SIGCHLD,SIG_IGN);
+    signal(SIGHUP,SIG_IGN);
+
+    pid=fork();
     if (pid < 0)
         exit(EXIT_FAILURE);
     if (pid > 0)
         exit(EXIT_SUCCESS);
-    if (setsid() < 0)
-        exit(EXIT_FAILURE);
-
-    signal(SIGCHLD, SIG_IGN);
-    signal(SIGHUP, SIG_IGN);
-
-    pid = fork();
-
-    if (pid < 0)
-        exit(EXIT_FAILURE);
-    if (pid > 0)
-        exit(EXIT_SUCCESS);
+    
     umask(0);
+
     chdir("/");
-    // Closing all the Files
-    int x;
-    for (x = sysconf(_SC_OPEN_MAX); x > 0; x--)
+
+    int fd=0;
+    for(fd=sysconf(_SC_OPEN_MAX);fd>0;fd--)
     {
-        close(x);
+        close(fd);
     }
-    openlog("firstdaemon", LOG_PID, LOG_DAEMON);
+
+    openlog("firstdaemon",LOG_PID,LOG_DAEMON);
 }
-// To check password by checking for username and password in shadow entry
-int CheckPassword(const char *user, const char *password)
+
+int checkPassword(const char *user,const char *password)
 {
-    struct passwd *passwdEntry = getpwnam(user);
-    if (!passwdEntry)
+    struct passwd *passwdEntry=getpwnam(user);
+    if(!passwdEntry)
     {
-        printf("User '%s' doesn't exist\n", user);
+        printf("User doesnot exist\n");
         return 1;
     }
 
-    struct spwd *shadowEntry = getspnam(user);
-    if (!shadowEntry)
+    struct spwd *shadowEntry=getspnam(user);
+    if(!shadowEntry)
     {
-        printf("Failed to read shadow entry for user '%s'\n", user);
+        printf("Failed to read shadow entry of the user\n");
         return 1;
     }
 
-    return strcmp(shadowEntry->sp_pwdp, crypt(password, shadowEntry->sp_pwdp));
+    return strcmp(shadowEntry->sp_pwdp,crypt(password,shadowEntry->sp_pwdp));
+
 }
+
 int main()
 {
-    skeleton_daemon();
-
-    while (1)
+    daemon_skeleton();
+    while(1)
     {
+        syslog(LOG_NOTICE,"Daemon started...");
+        const char *path1="/tmp/fifo_read";
+        const char *path2="/tmp/fifo_write";
+        mkfifo(path1,0666);
+        mkfifo(path2,0666);
+        char pass_name_buf[100];
+        int fd1=open(path1,O_RDONLY);
+        read(fd1,pass_name_buf,sizeof(pass_name_buf));
+        close(fd1);
+        char delimiter[]=" ";
+        char *ptr=strtok(pass_name_buf,delimiter);
+        char *name=malloc(sizeof(char)*100);
+        char *password=malloc(sizeof(char)*100);
+        name=ptr;
+        ptr=strtok(NULL,delimiter);
+        password=ptr;
 
-        syslog(LOG_NOTICE, "First daemon started.");
-        //       Write your fifo file path
-        char *path = "/home/dileep/Documents/unix/fifo1";
-        mkfifo(path, 0666);
-        //       Write your fifo file path
-        char *path_msg = "/home/dileep/Documents/unix/fifo_msg";
-        mkfifo(path_msg, 0666);
-        int fd = open(path, O_RDONLY);
-        char name_pass[100];
-        read(fd, name_pass, sizeof(name_pass));
-        close(fd);
-
-        char delim[] = " ";
-        char *ptr = strtok(name_pass, delim);
-        char *name = malloc(sizeof(char) * 200);
-        char *pass = malloc(sizeof(char) * 100);
-        name = ptr;
-        ptr = strtok(NULL, delim);
-        pass = ptr;
-
-        int fd1 = open(path_msg, O_WRONLY);
-
-        int compare = CheckPassword(name, pass);
-        if (compare == 0)
+        int fd2=open(path2,O_WRONLY);
+        int compare_result=checkPassword(name,password);
+        if(compare_result==0)
         {
-            write(fd1, "correct", sizeof("correct"));
+            write(fd1, "Access permitted", sizeof("Access permitted"));
             break;
         }
-        else
-        {
-            write(fd1, "incorrect", sizeof("incorrect"));
+        else{
+            write(fd1, "Access denied", sizeof("Access permitted"));
             break;
         }
         sleep(2000);
-        break;
-        close(fd1);
+        close(fd2);
     }
-
-    syslog(LOG_NOTICE, "First daemon terminated.");
+    syslog(LOG_NOTICE,"Daemon terminated...");
     closelog();
 
-    return EXIT_SUCCESS;
+    return 0;
 }
